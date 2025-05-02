@@ -26,3 +26,8 @@ class UserResponse(UserBase):
 class Token(BaseModel):
     access_token: str
     token_type: str
+
+
+class CodeRequest(BaseModel):
+    code: str
+    user_id: int
