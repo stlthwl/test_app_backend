@@ -23,6 +23,7 @@ class Confirm(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     code = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    actual = Column(Boolean, default=False)
 
     user = relationship("User", back_populates="confirm_codes")
 

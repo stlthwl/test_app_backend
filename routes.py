@@ -75,7 +75,8 @@ def generate_and_save_confirm_code(user_id: int, db: Session):
 
     new_confirm_code = Confirm(
         user_id=user_id,
-        code=str(code)
+        code=str(code),
+        actual=True
     )
 
     db.add(new_confirm_code)
@@ -111,62 +112,90 @@ def confirm(user: UserBase, db: Session = Depends(get_db)):
 
 @router.post("/confirm_profile")
 def confirm_profile(request: CodeRequest, db: Session = Depends(get_db)):
-    with db.begin():
-        db_confirm = db.query(Confirm).filter(
-            Confirm.code == request.code,
-            Confirm.user_id == request.user_id
-        ).first()
+    try:
+        with db.begin():
+            db_confirm = db.query(Confirm).filter(
+                Confirm.code == request.code,
+                Confirm.user_id == request.user_id
+            ).first()
 
-        if not db_confirm:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Неверный код подтверждения"
-            )
+            if not db_confirm:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Неверный код подтверждения"
+                )
 
-        db.delete(db_confirm)
+            if not db_confirm.actual:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Код недействителен"
+                )
 
-        user = db.query(User).filter(User.id == request.user_id).first()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Пользователь не найден"
-            )
+            db_user_confirms = db.query(Confirm).filter(Confirm.user_id == request.user_id).all()
+            for db_user_confirm in db_user_confirms:
+                db.delete(db_user_confirm)
 
-        user.blocked = False
-        db.add(user)
+            user = db.query(User).filter(User.id == request.user_id).first()
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Пользователь не найден"
+                )
 
-    return {
-        "confirmed": True,
-        "message": "Учетная запись подтверждена"
-    }
+            user.blocked = False
+            db.add(user)
+
+        return {
+            "confirmed": True,
+            "message": "Учетная запись подтверждена"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
 
 
 @router.post("/register", response_model=UserResponse)
 def register(user: UserCreate, db: Session = Depends(get_db)):
     try:
         with db.begin():
+            hashed_password = get_password_hash(user.password)
             db_user = db.query(User).filter(User.email == user.email).first()
             if db_user:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Пользователь с таким email уже зарегистрирован"
+                if not db_user.blocked:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Пользователь с таким email уже зарегистрирован"
+                    )
+
+                db_user.password = hashed_password
+                db.add(db_user)
+
+                confirm_codes = db.query(Confirm).filter(Confirm.user_id == db_user.id).all()
+                if len(confirm_codes) != 0:
+                    for confirm_code in confirm_codes:
+                        confirm_code.actual = False
+                        db.add(confirm_code)
+
+                send_code_response = generate_and_save_confirm_code(db_user.id, db)
+                send_email(db_user.email, f'Код подтверждения: {send_code_response.get("code")}')
+
+                return db_user
+            else:
+                new_user = User(
+                    email=user.email,
+                    password=hashed_password,  # Сохраняем хеш вместо пароля
+                    blocked=True
                 )
 
-            hashed_password = get_password_hash(user.password)
+                db.add(new_user)
+                db.flush()
 
-            new_user = User(
-                email=user.email,
-                password=hashed_password,  # Сохраняем хеш вместо пароля
-                blocked=True
-            )
+                send_code_response = generate_and_save_confirm_code(new_user.id, db)
+                send_email(new_user.email, f'Код подтверждения: {send_code_response.get("code")}')
 
-            db.add(new_user)
-            db.flush()
-
-            send_code_response = generate_and_save_confirm_code(new_user.id, db)
-            send_email(new_user.email, f'Код подтверждения: {send_code_response.get("code")}')
-
-            return new_user
+                return new_user
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -176,25 +205,31 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=Token)
 def login(request: LoginRequest, db: Session = Depends(get_db)):
-    email = request.email
-    password = request.password
+    try:
+        email = request.email
+        password = request.password
 
-    user = db.query(User).filter(User.email == email).first()
+        user = db.query(User).filter(User.email == email).first()
 
-    # check user
-    if not user or not verify_password(password, user.password):
+        # check user
+        if not user or not verify_password(password, user.password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Неверный логин или пароль",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # check block
+        if user.blocked:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Учетная запись не подтверждена"
+            )
+
+        access_token = create_access_token(data={"sub": user.email})
+        return {"access_token": access_token, "token_type": "bearer"}
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный логин или пароль",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
         )
-
-    # check block
-    if user.blocked:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Учетная запись не подтверждена"
-        )
-
-    access_token = create_access_token(data={"sub": user.email})
-    return {"access_token": access_token, "token_type": "bearer"}
