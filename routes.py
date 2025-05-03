@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from passlib.context import CryptContext
 from typing import List, Optional
 from fastapi.security import OAuth2PasswordBearer
+from config import settings
 
 from jose import jwt
 from datetime import datetime, timedelta
@@ -48,10 +49,10 @@ def get_password_hash(password: str):
 
 
 def send_email(to_email: str, body: str):
-    smtp_server = "smtp.mail.ru"  # Замените на ваш SMTP сервер
-    smtp_port = 587  # Обычно 587 для TLS
-    smtp_user = "stlthwl92@mail.ru"  # Ваш email
-    smtp_password = "JY3Qyf8Jpa67TVUieBfS"  # Ваш пароль
+    smtp_server = settings.SMTP_SERVER
+    smtp_port = settings.SMTP_PORT
+    smtp_user = settings.SMTP_USER
+    smtp_password = settings.SMTP_PASSWORD
 
     msg = MIMEMultipart()
     msg['From'] = smtp_user

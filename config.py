@@ -12,6 +12,11 @@ class Settings(BaseSettings):
     POSTGRES_HOST: str = os.getenv('DB_HOST')
     POSTGRES_PORT: str = os.getenv('DB_PORT')
 
+    SMTP_SERVER: str = os.getenv('SMTP_SERVER')
+    SMTP_PORT: str = os.getenv('SMTP_PORT')
+    SMTP_USER: str = os.getenv('SMTP_USER')
+    SMTP_PASSWORD: str = os.getenv('SMTP_PASSWORD')
+
     class Config:
         env_file_encoding = 'utf-8'
 
