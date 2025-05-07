@@ -110,6 +110,24 @@ def confirm(user: UserBase, db: Session = Depends(get_db)):
     return generate_and_save_confirm_code(users[0].id, db)
 
 
+@router.post("/email")
+def email():
+    try:
+        email = 'stlthwl92@mail.ru'
+        message = 'test airflow'
+
+        send_email(email, message)
+
+        return {
+            'message': 'email sent'
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=str(e)
+        )
+
+
 @router.post("/confirm_profile")
 def confirm_profile(request: CodeRequest, db: Session = Depends(get_db)):
     try:
